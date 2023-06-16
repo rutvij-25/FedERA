@@ -8,14 +8,40 @@ from torchvision import models
 from torch.utils import data
 import numpy as np
 from PIL import Image
+from functools import partial
+import torchtext
+from torchtext.data.utils import get_tokenizer
+from torchtext.vocab import build_vocab_from_iterator
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #serverlib and eval_lib should be on the same device
 
+def pad_collate_batch(batch, vocab, tokenizer):
+    (yy, xx) = zip(*batch)
+    xx = [vocab(tokenizer(x)) for x in xx]
+    yy = [y-1 for y in yy]
+    lens = [len(x) for x in xx]
+    maxlen = max(lens)
+    xx_pad = [x + [0]*(maxlen - len(x)) for x in xx]
+    return torch.LongTensor(xx_pad),torch.LongTensor(yy)
+
+def yield_tokens(data_iter, tokenizer):
+    for _, text in data_iter:
+        yield tokenizer(text)
+
 def load_data(config):
-    testset = get_data(config)
-    testloader = DataLoader(testset, batch_size=config['batch_size'])
-    num_examples = {"testset": len(testset)}
+    if config['dataset'] == 'YahooAnswers':
+        testset = get_data(config)
+        trainset = torchtext.datasets.YahooAnswers(split = ('train'))
+        tokenizer = get_tokenizer("basic_english")
+        vocab = build_vocab_from_iterator(yield_tokens(trainset,tokenizer), specials=["<unk>"], max_tokens=10000)
+        vocab.set_default_index(vocab["<unk>"])
+        testloader = DataLoader(testset, batch_size=config['batch_size'], shuffle=False, collate_fn=partial(pad_collate_batch, vocab=vocab, tokenizer=tokenizer))
+        num_examples = {"testset": len(testset)}
+    else:
+        testset = get_data(config)
+        testloader = DataLoader(testset, batch_size=config['batch_size'])
+        num_examples = {"testset": len(testset)}
     return testloader, num_examples
 
 ### Load different dataset
@@ -45,6 +71,9 @@ def get_data(config):
     if config['dataset'] == 'CUSTOM':
         apply_transform = transforms.Compose([transforms.Resize(config['resize_size']), transforms.ToTensor()])
         testset = customDataset(root='./server_custom_dataset/CUSTOM/test', transform=apply_transform)
+
+    if config['dataset'] == 'YahooAnswers':
+        testset = torchtext.datasets.YahooAnswers(split = ('test'))
 
     return testset
 
@@ -88,6 +117,34 @@ def sample_return(root):
         newdataset.append(item)
     return newdataset
 
+class LSTMModel(nn.Module):
+    
+    def __init__(self,vocab_size,embedding_dim,hidden_dim,output_dim):
+        
+        super(LSTMModel,self).__init__()
+        
+        # Embedding layer converts integer sequences to vector sequences
+        self.embedding = nn.Embedding(vocab_size,embedding_dim,padding_idx=-1)
+        
+        # LSTM layer process the vector sequences 
+        self.lstm = nn.LSTM(embedding_dim,
+                            hidden_dim,
+                            num_layers = 2,
+                            bidirectional = True,
+                            dropout = 0.3,
+                            batch_first = True
+                           )
+        
+        # Dense layer to predict 
+        self.fc = nn.Linear(2*hidden_dim,output_dim)
+        
+    def forward(self,text):
+        embedded = self.embedding(text)
+        o,(hidden,cell) = self.lstm(embedded)        
+        cat = torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1)
+        output = self.fc(cat)
+        
+        return output
 
 
 class LeNet(nn.Module):
@@ -147,6 +204,13 @@ def get_net(config):
             net = models.alexnet(num_classes=10)
         else:
             net = models.alexnet(num_classes=100)
+    if config['net'] == 'LSTMModel':
+        if config['dataset'] == 'YahooAnswers':
+            num_class = 10
+            vocab_size = 10000
+            em_size = 128
+            hidden_dim = 128
+            net = LSTMModel(vocab_size, em_size, hidden_dim, num_class)
     return net
 
 def train_model(net, trainloader):

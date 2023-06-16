@@ -3,6 +3,7 @@ from torchvision import transforms,datasets
 from torch.utils import data
 import numpy as np
 from PIL import Image
+import torchtext
 
 # Define a function to get the train and test datasets based on the given configuration
 def get_data(config):
@@ -43,6 +44,9 @@ def get_data(config):
         # Load the custom dataset
         trainset = customDataset(root='client_custom_dataset/CUSTOM/train', transform=apply_transform)
         testset = customDataset(root='client_custom_dataset/CUSTOM/test', transform=apply_transform)
+    elif config['dataset'] == 'YahooAnswers':
+        trainset = torchtext.datasets.YahooAnswers(split = ('train'))
+        testset = torchtext.datasets.YahooAnswers(split = ('test'))
     else:
         # Raise an error if an unsupported dataset is specified
         raise ValueError(f"Unsupported dataset type: {config['dataset']}")

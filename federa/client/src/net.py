@@ -1,6 +1,36 @@
 from torch import nn
 from torchvision import models
+import torch
 
+class LSTMModel(nn.Module):
+    
+    def __init__(self,vocab_size,embedding_dim,hidden_dim,output_dim):
+        
+        super(LSTMModel,self).__init__()
+        
+        # Embedding layer converts integer sequences to vector sequences
+        self.embedding = nn.Embedding(vocab_size,embedding_dim,padding_idx=-1)
+        
+        # LSTM layer process the vector sequences 
+        self.lstm = nn.LSTM(embedding_dim,
+                            hidden_dim,
+                            num_layers = 2,
+                            bidirectional = True,
+                            dropout = 0.3,
+                            batch_first = True
+                           )
+        
+        # Dense layer to predict 
+        self.fc = nn.Linear(2*hidden_dim,output_dim)
+        
+    def forward(self,text):
+        embedded = self.embedding(text)
+        o,(hidden,cell) = self.lstm(embedded)        
+        cat = torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1)
+        output = self.fc(cat)
+        
+        return output
+    
 class LeNet(nn.Module):
     def __init__(self, in_channels=1, num_classes=10):
         super().__init__()
@@ -58,4 +88,11 @@ def get_net(config):
             net = models.alexnet(num_classes=10)
         else:
             net = models.alexnet(num_classes=100)
+    if config['net'] == 'LSTMModel':
+        if config['dataset'] == 'YahooAnswers':
+            num_class = 10
+            vocab_size = 10000
+            em_size = 128
+            hidden_dim = 128
+            net = LSTMModel(vocab_size, em_size, hidden_dim, num_class)
     return net

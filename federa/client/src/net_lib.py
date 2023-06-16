@@ -3,7 +3,9 @@ import time
 from copy import deepcopy
 from math import ceil
 from tqdm import tqdm
-
+from functools import partial
+from torchtext.data.utils import get_tokenizer
+from torchtext.vocab import build_vocab_from_iterator
 
 import torch
 
@@ -27,6 +29,13 @@ def load_data(config):
         trainloader = DataLoader(datasets, batch_size= config['batch_size'], shuffle=True)
         testloader = DataLoader(testset, batch_size=config['batch_size'])
         num_examples = {"trainset": len(datasets), "testset": len(testset)}
+    elif config['dataset'] == 'YahooAnswers':
+        tokenizer = get_tokenizer("basic_english")
+        vocab = build_vocab_from_iterator(yield_tokens(trainset,tokenizer), specials=["<unk>"], max_tokens=10000)
+        vocab.set_default_index(vocab["<unk>"])
+        trainloader = DataLoader(trainset, batch_size=config['batch_size'], shuffle=False, collate_fn=partial(pad_collate_batch, vocab=vocab, tokenizer=tokenizer))
+        testloader = DataLoader(testset, batch_size=config['batch_size'], shuffle=False, collate_fn=partial(pad_collate_batch, vocab=vocab, tokenizer=tokenizer))
+        num_examples = {"trainset": len(trainset), "testset": len(testset)}
     else:
         trainloader = DataLoader(trainset, batch_size= config['batch_size'], shuffle=True)
         testloader = DataLoader(testset, batch_size=config['batch_size'])
@@ -35,6 +44,18 @@ def load_data(config):
     # Return data loaders and number of examples in train and test datasets
     return trainloader, testloader, num_examples
 
+def pad_collate_batch(batch, vocab, tokenizer):
+    (yy, xx) = zip(*batch)
+    xx = [vocab(tokenizer(x)) for x in xx]
+    yy = [y-1 for y in yy]
+    lens = [len(x) for x in xx]
+    maxlen = max(lens)
+    xx_pad = [x + [0]*(maxlen - len(x)) for x in xx]
+    return torch.LongTensor(xx_pad),torch.LongTensor(yy)
+
+def yield_tokens(data_iter, tokenizer):
+    for _, text in data_iter:
+        yield tokenizer(text)
 
 def flush_memory():
     torch.cuda.empty_cache()
